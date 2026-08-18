@@ -15,6 +15,29 @@ export function formatImageUrl(url) {
   return url;
 }
 
+export async function getStorageInfo() {
+  try {
+    const res = await fetch(`${API_BASE}/storage`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Unable to fetch storage info from API:', err);
+  }
+
+  const history = getLocalHistory();
+  const jsonStr = JSON.stringify(history);
+  const bytes = new Blob([jsonStr]).size;
+  const usedMB = parseFloat((bytes / (1024 * 1024)).toFixed(2));
+  return {
+    sizeBytes: bytes,
+    usedMB,
+    maxMB: 500,
+    percentage: parseFloat(((bytes / (500 * 1024 * 1024)) * 100).toFixed(1)),
+    dbEngine: 'LocalStorage'
+  };
+}
+
 /* ==========================================================================
    History Storage & Retrieval Operations
    ========================================================================== */

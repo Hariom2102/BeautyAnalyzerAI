@@ -35,9 +35,31 @@ export function renderAdminAuthScreen(hasPasswordSet) {
   `;
 }
 
-export function renderAdminPanel(capturesList, isCameraActive = false, autoRefreshEnabled = true) {
+export function renderAdminPanel(capturesList, isCameraActive = false, autoRefreshEnabled = true, storageInfo = null) {
   const totalCaptures = capturesList ? capturesList.length : 0;
   const latestCapture = capturesList && capturesList.length > 0 ? capturesList[0] : null;
+
+  const storage = storageInfo || {
+    usedMB: 0,
+    maxMB: 500,
+    percentage: 0,
+    dbEngine: 'PostgreSQL'
+  };
+
+  const percentage = Math.min(100, Math.max(0, storage.percentage || 0));
+  let storageColor = '#10B981';
+  let storageColorBg = 'rgba(16, 185, 129, 0.15)';
+  let storageGradient = 'linear-gradient(90deg, #10B981 0%, #34D399 100%)';
+
+  if (percentage >= 90) {
+    storageColor = '#EF4444';
+    storageColorBg = 'rgba(239, 68, 68, 0.15)';
+    storageGradient = 'linear-gradient(90deg, #F87171 0%, #EF4444 100%)';
+  } else if (percentage >= 75) {
+    storageColor = '#F59E0B';
+    storageColorBg = 'rgba(245, 158, 11, 0.15)';
+    storageGradient = 'linear-gradient(90deg, #FBBF24 0%, #F59E0B 100%)';
+  }
 
   return `
     <div style="display: flex; flex-direction: column; gap: 24px;">
@@ -84,7 +106,7 @@ export function renderAdminPanel(capturesList, isCameraActive = false, autoRefre
       </div>
 
       <!-- Quick Metrics Grid -->
-      <div class="admin-metrics-grid">
+      <div class="admin-metrics-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px;">
         <div class="glass-card" style="padding: 16px 20px; display: flex; align-items: center; gap: 16px;">
           <div style="width: 48px; height: 48px; border-radius: var(--radius-lg); background: rgba(99, 102, 241, 0.15); display: flex; align-items: center; justify-content: center; color: #6366F1; flex-shrink: 0;">
             <span class="material-symbols-outlined" style="font-size: 28px;">photo_library</span>
@@ -107,13 +129,30 @@ export function renderAdminPanel(capturesList, isCameraActive = false, autoRefre
           </div>
         </div>
 
-        <div class="glass-card" style="padding: 16px 20px; display: flex; align-items: center; gap: 16px;">
-          <div style="width: 48px; height: 48px; border-radius: var(--radius-lg); background: rgba(236, 72, 153, 0.15); display: flex; align-items: center; justify-content: center; color: #EC4899; flex-shrink: 0;">
-            <span class="material-symbols-outlined" style="font-size: 28px;">storage</span>
+        <!-- Database Storage Meter (Out of 500 MB) -->
+        <div class="glass-card" style="padding: 16px 20px; display: flex; flex-direction: column; justify-content: center; gap: 8px;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="width: 40px; height: 40px; border-radius: var(--radius-lg); background: ${storageColorBg}; display: flex; align-items: center; justify-content: center; color: ${storageColor}; flex-shrink: 0;">
+                <span class="material-symbols-outlined" style="font-size: 24px;">database</span>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">
+                  ${storage.dbEngine || 'DB'} Storage (500 MB Limit)
+                </div>
+                <div style="font-size: 1.1rem; font-weight: 700; color: var(--text-primary);">
+                  ${storage.usedMB} MB <span style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted);">/ 500 MB</span>
+                </div>
+              </div>
+            </div>
+            <div style="font-size: 0.95rem; font-weight: 700; color: ${storageColor};">
+              ${percentage}%
+            </div>
           </div>
-          <div>
-            <div style="font-size: 0.8rem; color: var(--text-muted);">Database Location</div>
-            <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);">SQLite + server/uploads/</div>
+
+          <!-- Progress bar -->
+          <div style="width: 100%; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden;">
+            <div style="width: ${percentage}%; height: 100%; background: ${storageGradient}; border-radius: 4px; transition: width 0.4s ease-in-out;"></div>
           </div>
         </div>
       </div>

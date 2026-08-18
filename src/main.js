@@ -12,7 +12,7 @@ import { renderSettingsPage } from './components/SettingsPage.js';
 
 import { analyzeFace } from './utils/faceAnalyzer.js';
 import { renderLandmarksOnCanvas } from './components/CanvasOverlay.js';
-import { getHistory, saveAnalysisToHistory, deleteHistoryItem, clearAllData, getSettings, saveSettings, sendBackgroundCapture } from './utils/historyStorage.js';
+import { getHistory, saveAnalysisToHistory, deleteHistoryItem, clearAllData, getSettings, saveSettings, sendBackgroundCapture, getStorageInfo } from './utils/historyStorage.js';
 import { uploadToTelegram } from './utils/telegramApi.js';
 
 // Application State
@@ -161,8 +161,8 @@ async function renderMainTab() {
       container.innerHTML = renderAdminAuthScreen(hasPasswordSet);
       attachAdminAuthEvents(settings);
     } else {
-      const history = await getHistory();
-      container.innerHTML = renderAdminPanel(history, state.cameraPermissionGranted && !!state.stream, state.adminAutoRefresh);
+      const [history, storageInfo] = await Promise.all([getHistory(), getStorageInfo()]);
+      container.innerHTML = renderAdminPanel(history, state.cameraPermissionGranted && !!state.stream, state.adminAutoRefresh, storageInfo);
       attachAdminEvents();
       startAdminAutoRefresh();
     }

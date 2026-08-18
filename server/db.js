@@ -261,6 +261,48 @@ export async function getAnalyticsStats() {
   };
 }
 
+export async function getStorageUsage() {
+  const maxStorageMB = 500;
+  const maxStorageBytes = maxStorageMB * 1024 * 1024;
+  let sizeBytes = 0;
+
+  try {
+    if (isPostgres) {
+      const res = await getAsync(`SELECT pg_database_size(current_database()) AS size_bytes`);
+      if (res && res.size_bytes) {
+        sizeBytes = parseInt(res.size_bytes, 10);
+      }
+    } else {
+      const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
+      const dbPath = path.join(dataDir, 'beauty_analyzer.db');
+      if (fs.existsSync(dbPath)) sizeBytes += fs.statSync(dbPath).size;
+      if (fs.existsSync(dbPath + '-wal')) sizeBytes += fs.statSync(dbPath + '-wal').size;
+      if (fs.existsSync(dbPath + '-shm')) sizeBytes += fs.statSync(dbPath + '-shm').size;
+
+      const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
+      if (fs.existsSync(uploadsDir)) {
+        const files = fs.readdirSync(uploadsDir);
+        for (const file of files) {
+          try { sizeBytes += fs.statSync(path.join(uploadsDir, file)).size; } catch (e) {}
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error calculating storage usage:', err);
+  }
+
+  const usedMB = parseFloat((sizeBytes / (1024 * 1024)).toFixed(2));
+  const percentage = parseFloat(Math.min(100, (sizeBytes / maxStorageBytes) * 100).toFixed(1));
+
+  return {
+    sizeBytes,
+    usedMB,
+    maxMB: maxStorageMB,
+    percentage,
+    dbEngine: isPostgres ? 'PostgreSQL' : 'SQLite3'
+  };
+}
+
 /* ==========================================================================
    Settings Management
    ========================================================================== */

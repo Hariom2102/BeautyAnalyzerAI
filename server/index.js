@@ -10,6 +10,7 @@ import {
   deleteAnalysis,
   clearAllAnalyses,
   getAnalyticsStats,
+  getStorageUsage,
   getSettings,
   saveSettings,
   isPostgres
@@ -53,6 +54,17 @@ app.get('/api/health', (req, res) => {
     serverTime: new Date().toISOString(),
     database: isPostgres ? 'PostgreSQL' : 'SQLite3'
   });
+});
+
+// Database Storage Usage (Out of 500 MB)
+app.get('/api/storage', async (req, res) => {
+  try {
+    const storageInfo = await getStorageUsage();
+    res.json(storageInfo);
+  } catch (err) {
+    console.error('Error fetching storage metrics:', err);
+    res.status(500).json({ error: 'Failed to fetch storage info' });
+  }
 });
 
 // Analytics & Stats
