@@ -284,9 +284,18 @@ export async function getStorageUsage() {
 
   try {
     if (isPostgres) {
-      const res = await getAsync(`SELECT pg_database_size(current_database()) AS size_bytes`);
-      if (res && res.size_bytes) {
-        sizeBytes = parseInt(res.size_bytes, 10);
+      try {
+        const res = await Promise.race([
+          getAsync(`SELECT COALESCE(sum(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(tablename))), 0) AS size_bytes FROM pg_tables WHERE schemaname = 'public'`),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Storage query timeout')), 1500))
+        ]);
+        if (res && res.size_bytes) {
+          sizeBytes = parseInt(res.size_bytes, 10);
+        }
+      } catch (e) {
+        const countRes = await getAsync(`SELECT COUNT(*) as cnt FROM analyses`);
+        const cnt = countRes ? parseInt(countRes.cnt || 0, 10) : 0;
+        sizeBytes = cnt * 350 * 1024;
       }
     } else {
       const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
