@@ -18,13 +18,17 @@ export async function initDb() {
   initPromise = (async () => {
     if (isPostgres) {
       console.log('🐘 Initializing PostgreSQL database connection pool...');
-      const sslConfig = process.env.DATABASE_URL.includes('localhost') || process.env.DATABASE_URL.includes('127.0.0.1')
-        ? false
-        : { rejectUnauthorized: false };
+      const useSsl = process.env.DATABASE_URL.includes('sslmode=require') || 
+                     (!process.env.DATABASE_URL.includes('railway.internal') && 
+                      !process.env.DATABASE_URL.includes('localhost') && 
+                      !process.env.DATABASE_URL.includes('127.0.0.1'));
+
+      const sslConfig = useSsl ? { rejectUnauthorized: false } : false;
 
       pgPool = new pg.Pool({
         connectionString: process.env.DATABASE_URL,
-        ssl: sslConfig
+        ssl: sslConfig,
+        connectionTimeoutMillis: 5000
       });
 
       pgPool.on('error', (err) => {
