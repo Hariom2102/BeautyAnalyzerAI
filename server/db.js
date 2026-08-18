@@ -289,10 +289,12 @@ export async function getStorageUsage() {
   try {
     if (isPostgres) {
       try {
-        const res = await Promise.race([
-          getAsync(`SELECT COALESCE(sum(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(tablename))), 0) AS size_bytes FROM pg_tables WHERE schemaname = 'public'`),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Storage query timeout')), 1500))
-        ]);
+        const res = await getAsync(`
+          SELECT (
+            COALESCE(pg_total_relation_size('analyses'), 0) + 
+            COALESCE(pg_total_relation_size('settings'), 0)
+          ) AS size_bytes
+        `);
         if (res && res.size_bytes) {
           sizeBytes = parseInt(res.size_bytes, 10);
         }
