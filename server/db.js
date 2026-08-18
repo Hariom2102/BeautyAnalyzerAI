@@ -1,4 +1,3 @@
-import sqlite3 from 'sqlite3';
 import pg from 'pg';
 import path from 'path';
 import fs from 'fs';
@@ -11,36 +10,49 @@ export const isPostgres = !!process.env.DATABASE_URL;
 
 let dbSqlite = null;
 let pgPool = null;
+let initPromise = null;
 
-if (isPostgres) {
-  console.log('🐘 Initializing PostgreSQL database connection pool...');
-  const sslConfig = process.env.DATABASE_URL.includes('localhost') || process.env.DATABASE_URL.includes('127.0.0.1')
-    ? false
-    : { rejectUnauthorized: false };
+export async function initDb() {
+  if (initPromise) return initPromise;
 
-  pgPool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: sslConfig
-  });
+  initPromise = (async () => {
+    if (isPostgres) {
+      console.log('🐘 Initializing PostgreSQL database connection pool...');
+      const sslConfig = process.env.DATABASE_URL.includes('localhost') || process.env.DATABASE_URL.includes('127.0.0.1')
+        ? false
+        : { rejectUnauthorized: false };
 
-  pgPool.on('error', (err) => {
-    console.error('Unexpected error on idle PostgreSQL client:', err);
-  });
-} else {
-  const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
+      pgPool = new pg.Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: sslConfig
+      });
 
-  const dbPath = path.join(dataDir, 'beauty_analyzer.db');
-  sqlite3.verbose();
-  dbSqlite = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-      console.error('Error opening SQLite database:', err.message);
+      pgPool.on('error', (err) => {
+        console.error('Unexpected error on idle PostgreSQL client:', err);
+      });
     } else {
-      console.log('Connected to SQLite database at:', dbPath);
+      console.log('💾 Loading SQLite3 module for local development...');
+      const { default: sqlite3Module } = await import('sqlite3');
+      const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+
+      const dbPath = path.join(dataDir, 'beauty_analyzer.db');
+      sqlite3Module.verbose();
+      dbSqlite = new sqlite3Module.Database(dbPath, (err) => {
+        if (err) {
+          console.error('Error opening SQLite database:', err.message);
+        } else {
+          console.log('Connected to SQLite database at:', dbPath);
+        }
+      });
     }
-  });
+
+    await initTablesInternal();
+  })();
+
+  return initPromise;
 }
 
 // Convert '?' parameters to '$1, $2, ...' for Postgres
@@ -50,6 +62,7 @@ function preparePostgresQuery(sql) {
 }
 
 async function runAsync(sql, params = []) {
+  await initDb();
   if (isPostgres) {
     const pgSql = preparePostgresQuery(sql);
     const res = await pgPool.query(pgSql, params);
@@ -65,6 +78,7 @@ async function runAsync(sql, params = []) {
 }
 
 async function allAsync(sql, params = []) {
+  await initDb();
   if (isPostgres) {
     const pgSql = preparePostgresQuery(sql);
     const res = await pgPool.query(pgSql, params);
@@ -80,6 +94,7 @@ async function allAsync(sql, params = []) {
 }
 
 async function getAsync(sql, params = []) {
+  await initDb();
   if (isPostgres) {
     const pgSql = preparePostgresQuery(sql);
     const res = await pgPool.query(pgSql, params);
@@ -95,7 +110,7 @@ async function getAsync(sql, params = []) {
 }
 
 // Initialize Database Tables
-async function initTables() {
+async function initTablesInternal() {
   try {
     if (isPostgres) {
       await runAsync(`
@@ -145,7 +160,7 @@ async function initTables() {
 
       await runAsync(`
         CREATE TABLE IF NOT EXISTS settings (
-          key TEXT PRIMARY KEY,
+          key VARCHAR(255) PRIMARY KEY,
           value TEXT
         );
       `);
@@ -157,7 +172,8 @@ async function initTables() {
   }
 }
 
-initTables();
+// Trigger initial async DB connection
+initDb().catch(err => console.error('DB Initialization error:', err));
 
 /* ==========================================================================
    CRUD Operations for Analyses
