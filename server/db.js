@@ -40,12 +40,16 @@ export async function initDb() {
 
       const dbPath = path.join(dataDir, 'beauty_analyzer.db');
       sqlite3Module.verbose();
-      dbSqlite = new sqlite3Module.Database(dbPath, (err) => {
-        if (err) {
-          console.error('Error opening SQLite database:', err.message);
-        } else {
-          console.log('Connected to SQLite database at:', dbPath);
-        }
+      await new Promise((resolve, reject) => {
+        dbSqlite = new sqlite3Module.Database(dbPath, (err) => {
+          if (err) {
+            console.error('Error opening SQLite database:', err.message);
+            reject(err);
+          } else {
+            console.log('Connected to SQLite database at:', dbPath);
+            resolve();
+          }
+        });
       });
     }
 
@@ -61,59 +65,55 @@ function preparePostgresQuery(sql) {
   return sql.replace(/\?/g, () => `$${paramIndex++}`);
 }
 
-async function runAsync(sql, params = []) {
-  await initDb();
+async function executeQueryDirect(sql, params = [], mode = 'run') {
   if (isPostgres) {
     const pgSql = preparePostgresQuery(sql);
     const res = await pgPool.query(pgSql, params);
-    return { changes: res.rowCount };
+    if (mode === 'run') return { changes: res.rowCount };
+    if (mode === 'all') return res.rows;
+    if (mode === 'get') return res.rows[0] || null;
   } else {
     return new Promise((resolve, reject) => {
-      dbSqlite.run(sql, params, function (err) {
-        if (err) reject(err);
-        else resolve(this);
-      });
+      if (mode === 'run') {
+        dbSqlite.run(sql, params, function (err) {
+          if (err) reject(err);
+          else resolve(this);
+        });
+      } else if (mode === 'all') {
+        dbSqlite.all(sql, params, (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        });
+      } else if (mode === 'get') {
+        dbSqlite.get(sql, params, (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      }
     });
   }
+}
+
+async function runAsync(sql, params = []) {
+  await initDb();
+  return executeQueryDirect(sql, params, 'run');
 }
 
 async function allAsync(sql, params = []) {
   await initDb();
-  if (isPostgres) {
-    const pgSql = preparePostgresQuery(sql);
-    const res = await pgPool.query(pgSql, params);
-    return res.rows;
-  } else {
-    return new Promise((resolve, reject) => {
-      dbSqlite.all(sql, params, (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
-  }
+  return executeQueryDirect(sql, params, 'all');
 }
 
 async function getAsync(sql, params = []) {
   await initDb();
-  if (isPostgres) {
-    const pgSql = preparePostgresQuery(sql);
-    const res = await pgPool.query(pgSql, params);
-    return res.rows[0] || null;
-  } else {
-    return new Promise((resolve, reject) => {
-      dbSqlite.get(sql, params, (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
-  }
+  return executeQueryDirect(sql, params, 'get');
 }
 
-// Initialize Database Tables
+// Initialize Database Tables (Direct execution to avoid recursion deadlock)
 async function initTablesInternal() {
   try {
     if (isPostgres) {
-      await runAsync(`
+      await executeQueryDirect(`
         CREATE TABLE IF NOT EXISTS analyses (
           id VARCHAR(255) PRIMARY KEY,
           beauty_score INT NOT NULL,
@@ -128,20 +128,20 @@ async function initTablesInternal() {
           image_url TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-      `);
+      `, [], 'run');
 
-      await runAsync(`
+      await executeQueryDirect(`
         CREATE TABLE IF NOT EXISTS settings (
           key VARCHAR(255) PRIMARY KEY,
           value TEXT
         );
-      `);
+      `, [], 'run');
 
       console.log('🐘 PostgreSQL database tables initialized successfully.');
     } else {
-      await runAsync(`PRAGMA journal_mode = WAL;`);
+      await executeQueryDirect(`PRAGMA journal_mode = WAL;`, [], 'run');
 
-      await runAsync(`
+      await executeQueryDirect(`
         CREATE TABLE IF NOT EXISTS analyses (
           id TEXT PRIMARY KEY,
           beauty_score INTEGER NOT NULL,
@@ -156,14 +156,14 @@ async function initTablesInternal() {
           image_url TEXT,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
-      `);
+      `, [], 'run');
 
-      await runAsync(`
+      await executeQueryDirect(`
         CREATE TABLE IF NOT EXISTS settings (
           key VARCHAR(255) PRIMARY KEY,
           value TEXT
         );
-      `);
+      `, [], 'run');
 
       console.log('💾 SQLite database tables verified/created successfully.');
     }
