@@ -1,4 +1,5 @@
 import sqlite3 from 'sqlite3';
+import pg from 'pg';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -6,86 +7,157 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Ensure data directory exists
-const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
+export const isPostgres = !!process.env.DATABASE_URL;
 
-const dbPath = path.join(dataDir, 'beauty_analyzer.db');
-sqlite3.verbose();
+let dbSqlite = null;
+let pgPool = null;
 
-export const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error opening SQLite database:', err.message);
-  } else {
-    console.log('Connected to SQLite database at:', dbPath);
-    initTables();
+if (isPostgres) {
+  console.log('🐘 Initializing PostgreSQL database connection pool...');
+  const sslConfig = process.env.DATABASE_URL.includes('localhost') || process.env.DATABASE_URL.includes('127.0.0.1')
+    ? false
+    : { rejectUnauthorized: false };
+
+  pgPool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: sslConfig
+  });
+
+  pgPool.on('error', (err) => {
+    console.error('Unexpected error on idle PostgreSQL client:', err);
+  });
+} else {
+  const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
   }
-});
 
-// Helper for promise-based queries
-function runAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve(this);
-    });
+  const dbPath = path.join(dataDir, 'beauty_analyzer.db');
+  sqlite3.verbose();
+  dbSqlite = new sqlite3.Database(dbPath, (err) => {
+    if (err) {
+      console.error('Error opening SQLite database:', err.message);
+    } else {
+      console.log('Connected to SQLite database at:', dbPath);
+    }
   });
 }
 
-function allAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+// Convert '?' parameters to '$1, $2, ...' for Postgres
+function preparePostgresQuery(sql) {
+  let paramIndex = 1;
+  return sql.replace(/\?/g, () => `$${paramIndex++}`);
 }
 
-function getAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
+async function runAsync(sql, params = []) {
+  if (isPostgres) {
+    const pgSql = preparePostgresQuery(sql);
+    const res = await pgPool.query(pgSql, params);
+    return { changes: res.rowCount };
+  } else {
+    return new Promise((resolve, reject) => {
+      dbSqlite.run(sql, params, function (err) {
+        if (err) reject(err);
+        else resolve(this);
+      });
     });
-  });
+  }
 }
 
-// Table Initialization
+async function allAsync(sql, params = []) {
+  if (isPostgres) {
+    const pgSql = preparePostgresQuery(sql);
+    const res = await pgPool.query(pgSql, params);
+    return res.rows;
+  } else {
+    return new Promise((resolve, reject) => {
+      dbSqlite.all(sql, params, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+  }
+}
+
+async function getAsync(sql, params = []) {
+  if (isPostgres) {
+    const pgSql = preparePostgresQuery(sql);
+    const res = await pgPool.query(pgSql, params);
+    return res.rows[0] || null;
+  } else {
+    return new Promise((resolve, reject) => {
+      dbSqlite.get(sql, params, (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+  }
+}
+
+// Initialize Database Tables
 async function initTables() {
   try {
-    await runAsync(`PRAGMA journal_mode = WAL;`);
+    if (isPostgres) {
+      await runAsync(`
+        CREATE TABLE IF NOT EXISTS analyses (
+          id VARCHAR(255) PRIMARY KEY,
+          beauty_score INT NOT NULL,
+          symmetry_score INT NOT NULL,
+          smile_score INT NOT NULL,
+          confidence_score INT NOT NULL,
+          pitch_angle INT DEFAULT 0,
+          yaw_angle INT DEFAULT 0,
+          roll_angle INT DEFAULT 0,
+          landmarks_json TEXT,
+          suggestions_json TEXT,
+          image_url TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
 
-    await runAsync(`
-      CREATE TABLE IF NOT EXISTS analyses (
-        id TEXT PRIMARY KEY,
-        beauty_score INTEGER NOT NULL,
-        symmetry_score INTEGER NOT NULL,
-        smile_score INTEGER NOT NULL,
-        confidence_score INTEGER NOT NULL,
-        pitch_angle INTEGER DEFAULT 0,
-        yaw_angle INTEGER DEFAULT 0,
-        roll_angle INTEGER DEFAULT 0,
-        landmarks_json TEXT,
-        suggestions_json TEXT,
-        image_url TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+      await runAsync(`
+        CREATE TABLE IF NOT EXISTS settings (
+          key VARCHAR(255) PRIMARY KEY,
+          value TEXT
+        );
+      `);
 
-    await runAsync(`
-      CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT
-      );
-    `);
+      console.log('🐘 PostgreSQL database tables initialized successfully.');
+    } else {
+      await runAsync(`PRAGMA journal_mode = WAL;`);
 
-    console.log('Database tables verified/created successfully.');
+      await runAsync(`
+        CREATE TABLE IF NOT EXISTS analyses (
+          id TEXT PRIMARY KEY,
+          beauty_score INTEGER NOT NULL,
+          symmetry_score INTEGER NOT NULL,
+          smile_score INTEGER NOT NULL,
+          confidence_score INTEGER NOT NULL,
+          pitch_angle INTEGER DEFAULT 0,
+          yaw_angle INTEGER DEFAULT 0,
+          roll_angle INTEGER DEFAULT 0,
+          landmarks_json TEXT,
+          suggestions_json TEXT,
+          image_url TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      await runAsync(`
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT
+        );
+      `);
+
+      console.log('💾 SQLite database tables verified/created successfully.');
+    }
   } catch (err) {
     console.error('Error initializing database tables:', err);
   }
 }
+
+initTables();
 
 /* ==========================================================================
    CRUD Operations for Analyses
@@ -172,13 +244,20 @@ export async function getAnalyticsStats() {
     FROM analyses
   `);
 
+  const totalScans = countRow ? parseInt(countRow.total_scans || 0, 10) : 0;
+  const avgBeauty = avgRow && avgRow.avg_beauty ? parseFloat(avgRow.avg_beauty) : 0;
+  const avgSymmetry = avgRow && avgRow.avg_symmetry ? parseFloat(avgRow.avg_symmetry) : 0;
+  const avgSmile = avgRow && avgRow.avg_smile ? parseFloat(avgRow.avg_smile) : 0;
+  const maxBeauty = avgRow && avgRow.max_beauty !== null ? parseInt(avgRow.max_beauty, 10) : 0;
+  const minBeauty = avgRow && avgRow.min_beauty !== null ? parseInt(avgRow.min_beauty, 10) : 0;
+
   return {
-    totalScans: countRow ? countRow.total_scans : 0,
-    averageBeautyScore: avgRow && avgRow.avg_beauty ? Math.round(avgRow.avg_beauty) : 0,
-    averageSymmetryScore: avgRow && avgRow.avg_symmetry ? Math.round(avgRow.avg_symmetry) : 0,
-    averageSmileScore: avgRow && avgRow.avg_smile ? Math.round(avgRow.avg_smile) : 0,
-    highestBeautyScore: avgRow && avgRow.max_beauty ? avgRow.max_beauty : 0,
-    lowestBeautyScore: avgRow && avgRow.min_beauty ? avgRow.min_beauty : 0
+    totalScans,
+    averageBeautyScore: Math.round(avgBeauty),
+    averageSymmetryScore: Math.round(avgSymmetry),
+    averageSmileScore: Math.round(avgSmile),
+    highestBeautyScore: maxBeauty,
+    lowestBeautyScore: minBeauty
   };
 }
 
@@ -209,8 +288,8 @@ export async function saveSettings(settingsObj) {
 function formatAnalysisRow(row) {
   let landmarks = {};
   let suggestions = [];
-  try { landmarks = JSON.parse(row.landmarks_json || '{}'); } catch (e) {}
-  try { suggestions = JSON.parse(row.suggestions_json || '[]'); } catch (e) {}
+  try { landmarks = typeof row.landmarks_json === 'string' ? JSON.parse(row.landmarks_json || '{}') : (row.landmarks_json || {}); } catch (e) {}
+  try { suggestions = typeof row.suggestions_json === 'string' ? JSON.parse(row.suggestions_json || '[]') : (row.suggestions_json || []); } catch (e) {}
 
   return {
     id: row.id,

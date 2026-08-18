@@ -11,7 +11,8 @@ import {
   clearAllAnalyses,
   getAnalyticsStats,
   getSettings,
-  saveSettings
+  saveSettings,
+  isPostgres
 } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -47,7 +48,11 @@ if (fs.existsSync(distDir)) {
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', serverTime: new Date().toISOString(), database: 'SQLite3' });
+  res.json({
+    status: 'ok',
+    serverTime: new Date().toISOString(),
+    database: isPostgres ? 'PostgreSQL' : 'SQLite3'
+  });
 });
 
 // Analytics & Stats
@@ -86,14 +91,15 @@ app.get('/api/history/:id', async (req, res) => {
   }
 });
 
-// Save analysis item (converts base64 image to static file if provided)
+// Save analysis item (saves base64 directly to database when on Postgres/volume-free mode)
 app.post('/api/history', async (req, res) => {
   try {
     const analysisData = req.body;
     let imageUrl = analysisData.image || '';
 
-    // If image is a base64 Data URL, write it to server uploads folder
-    if (imageUrl.startsWith('data:image/')) {
+    // If local SQLite & disk storage enabled, save base64 as static file
+    const storeOnDisk = !isPostgres && process.env.STORE_IMAGES_ON_DISK !== 'false';
+    if (storeOnDisk && imageUrl.startsWith('data:image/')) {
       const id = analysisData.id || ('analysis_' + Date.now());
       const matches = imageUrl.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
       
@@ -187,7 +193,7 @@ app.post('/api/settings', async (req, res) => {
 
 // SPA Fallback for client-side routing
 if (fs.existsSync(distDir)) {
-  app.get('*', (req, res, next) => {
+  app.use((req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
       return next();
     }
